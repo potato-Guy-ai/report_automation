@@ -4,6 +4,7 @@ import tempfile
 
 from engine.template_loader import load_template
 from engine.content_inserter import replace_placeholders
+from ui_correction import render_correction_ui
 
 
 # ============================================================
@@ -34,10 +35,29 @@ st.title("📄 Report Automation System")
 
 st.write(
     "Create a professional event report automatically "
-    "using the provided Word template."
+    "using the provided Word template, or correct the "
+    "date in an already-finished report."
 )
 
 st.divider()
+
+
+# ============================================================
+# MODE SELECTION
+# ============================================================
+
+mode = st.radio(
+    "Mode",
+    [
+        "Generate from template",
+        "Correct existing report",
+    ],
+    horizontal=True,
+)
+
+if mode == "Correct existing report":
+    render_correction_ui()
+    st.stop()
 
 
 # ============================================================
