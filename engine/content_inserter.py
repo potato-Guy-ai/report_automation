@@ -196,14 +196,19 @@ def _set_paragraph_content(paragraph, text):
 # IMAGE INSERTION
 # ============================================================
 
-def _insert_image(paragraph, image_path, image_type):
+def _insert_image(paragraph, image, image_type):
 
-    image_path = Path(image_path)
+    is_file_like = hasattr(image, "read") and hasattr(image, "seek")
 
-    if not image_path.exists():
-        raise FileNotFoundError(
-            f"Image not found: {image_path}"
-        )
+    if is_file_like:
+        image_path = None
+        image.seek(0)
+    else:
+        image_path = Path(image)
+        if not image_path.exists():
+            raise FileNotFoundError(
+                f"Image not found: {image_path}"
+            )
 
     # Remove placeholder
     for run in paragraph.runs:
@@ -274,7 +279,10 @@ def _insert_image(paragraph, image_path, image_type):
     # READ IMAGE DIMENSIONS
     # --------------------------------------------------------
 
-    with Image.open(image_path) as img:
+    if is_file_like:
+        image.seek(0)
+
+    with Image.open(image) as img:
 
         width_px, height_px = img.size
 
@@ -300,11 +308,19 @@ def _insert_image(paragraph, image_path, image_type):
         else paragraph.add_run()
     )
 
-    run.add_picture(
-        str(image_path),
-        width=Inches(width_inches),
-        height=Inches(height_inches)
-    )
+    if is_file_like:
+        image.seek(0)
+        run.add_picture(
+            image,
+            width=Inches(width_inches),
+            height=Inches(height_inches)
+        )
+    else:
+        run.add_picture(
+            str(image_path),
+            width=Inches(width_inches),
+            height=Inches(height_inches)
+        )
 
 
 # ============================================================

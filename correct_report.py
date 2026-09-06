@@ -5,6 +5,8 @@ Usage:
     python correct_report.py report.docx --new-date 23-02-2026
     python correct_report.py report.docx --new-date 23-02-2026 --yes
     python correct_report.py report.docx --new-date 23/02/2026 -o corrected.docx
+    python correct_report.py report.docx --new-date 23/02/2026 \
+        --new-venue "CS BLOCK B" --poster poster.jpg --photo1 p1.jpg
 """
 
 import argparse
@@ -15,8 +17,10 @@ from engine.corrector import (
     apply_occurrences,
     default_output_path,
     detect_corrections,
+    detect_venue,
     find_image_sections,
     load_document,
+    trim_after_full_poster,
 )
 
 
@@ -45,6 +49,14 @@ def build_parser():
         help=(
             "The corrected event date, e.g. 23-02-2026, "
             "23/02/2026 or 23rd February 2026."
+        ),
+    )
+
+    parser.add_argument(
+        "--new-venue",
+        help=(
+            "The corrected venue value. Every occurrence of the current "
+            "venue is replaced, preserving each occurrence's formatting."
         ),
     )
 
@@ -88,7 +100,12 @@ def build_parser():
 # PREVIEW
 # ============================================================
 
-def print_preview(result, image_sections=None, image_args=None):
+def print_preview(
+    result,
+    image_sections=None,
+    image_args=None,
+    venue_result=None,
+):
 
     primary = result["primary"]
 
@@ -126,6 +143,43 @@ def print_preview(result, image_sections=None, image_args=None):
     if changed:
         print(f" {len(changed)} date(s) will be updated.")
 
+    if venue_result is not None:
+
+        venue_primary = venue_result.get("primary")
+        venue_changed = [
+            m for m in venue_result["matches"] if m["changed"]
+        ]
+
+        if venue_primary is None:
+
+            print()
+            print(" No 'Venue :' label found; venue was left unchanged.")
+
+        elif venue_changed:
+
+            print()
+            print(
+                f" Current venue value : {venue_primary['value']!r}"
+            )
+            print(
+                f" Corrected venue value: {venue_result['new_venue']!r}"
+            )
+            print()
+
+            for index, match in enumerate(venue_changed, start=1):
+
+                print(
+                    f" {index:2d}. {match['original']!r}  ->  "
+                    f"{match['new']!r}"
+                )
+                print(f"     {match['location']}")
+                print(f"     ...{match['snippet']}...")
+                print()
+
+            print(
+                f" {len(venue_changed)} venue occurrence(s) will be updated."
+            )
+
     image_labels = {
         "poster": "Poster (medium + full)",
         "photo1": "Event photo 1",
@@ -162,9 +216,21 @@ def print_preview(result, image_sections=None, image_args=None):
                     f"-> no matching image found, left as-is"
                 )
 
+    if image_sections and image_sections.get("poster_full"):
+
+        print()
+        print(" The large poster is the last page; trailing pages after")
+        print(" it will be removed.")
+
     print()
 
-    return bool(changed) or bool(image_sections and image_args)
+    has_date_changes = bool(changed)
+    has_venue_changes = bool(venue_result) and any(
+        m["changed"] for m in venue_result["matches"]
+    )
+    has_image_changes = bool(image_sections and image_args)
+
+    return has_date_changes or has_venue_changes or has_image_changes
 
 
 # ============================================================
@@ -189,6 +255,12 @@ def main():
         print(f"Error: {error}")
         raise SystemExit(1)
 
+    venue_result = (
+        detect_venue(document, args.new_venue)
+        if args.new_venue
+        else None
+    )
+
     image_args = {
         key: Path(value)
         for key, value in (
@@ -199,16 +271,13 @@ def main():
         if value
     }
 
-    image_sections = (
-        find_image_sections(document)
-        if image_args
-        else {}
-    )
+    image_sections = find_image_sections(document)
 
     has_changes = print_preview(
         date_result,
         image_sections,
         image_args,
+        venue_result,
     )
 
     if not has_changes:
@@ -220,14 +289,24 @@ def main():
             print("Cancelled. No changes written.")
             return
 
-    confirmed = [
+    confirmed_dates = [
         match
         for match in date_result["matches"]
         if match["changed"]
     ]
 
-    total = apply_occurrences(document, confirmed)
+    total_dates = apply_occurrences(document, confirmed_dates)
 
+    total_venue = 0
+    if venue_result is not None:
+        confirmed_venue = [
+            match
+            for match in venue_result["matches"]
+            if match["changed"]
+        ]
+        total_venue = apply_occurrences(document, confirmed_venue)
+
+    images_replaced = 0
     if image_args:
 
         image_mapping = {}
@@ -244,9 +323,7 @@ def main():
         for stream in image_mapping.values():
             stream.close()
 
-    else:
-
-        images_replaced = 0
+    trimmed = trim_after_full_poster(document)
 
     output_path = (
         Path(args.output)
@@ -257,9 +334,13 @@ def main():
     document.save(output_path)
 
     print()
-    print(f" Applied {total} date correction(s).")
+    print(f" Applied {total_dates} date correction(s).")
+    if total_venue:
+        print(f" Applied {total_venue} venue correction(s).")
     if image_args:
         print(f" Replaced {images_replaced} image(s).")
+    if trimmed:
+        print(f" Removed {trimmed} trailing element(s) after the large poster.")
     print(f" Output : {output_path}")
     print(" Original file was left untouched.")
     print()

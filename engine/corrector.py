@@ -440,18 +440,50 @@ def _paragraph_has_image(paragraph):
 
 def _image_extents(paragraph):
     """
-    Return (width, height) in EMU of the first image in the paragraph,
-    or None when the paragraph has no image.
+    Return (width, height) in EMU of the on-page size of the first image
+    in the paragraph, or None when the paragraph has no usable image.
+
+    Prefers <wp:extent> (the true display size). Falls back to the first
+    <a:ext> that actually carries cx/cy, skipping the attribute-less
+    <a:ext> entries that Word inserts inside <a:blip><a:extLst>.
     """
-    extents = paragraph._element.findall(
+    element = paragraph._element
+
+    for ext in element.findall(".//" + qn("wp:extent")):
+        try:
+            return int(ext.get("cx")), int(ext.get("cy"))
+        except (TypeError, ValueError):
+            pass
+
+    for ext in element.findall(
         ".//{http://schemas.openxmlformats.org/drawingml/2006/main}ext"
-    )
-    if not extents:
-        return None
+    ):
+        try:
+            return int(ext.get("cx")), int(ext.get("cy"))
+        except (TypeError, ValueError):
+            continue
+
+    return None
+
+
+def _image_part_names(paragraph):
+    """
+    Set of media part names (word/media/...) referenced by the images in
+    the paragraph. Empty when the paragraph has no embedded picture.
+    """
+    names = set()
     try:
-        return int(extents[0].get("cx")), int(extents[0].get("cy"))
-    except (TypeError, ValueError):
-        return None
+        related_parts = paragraph.part.related_parts
+    except AttributeError:
+        return names
+    for blip in paragraph._element.findall(".//" + qn("a:blip")):
+        r_id = blip.get(qn("r:embed")) or blip.get(qn("r:link"))
+        if not r_id:
+            continue
+        part = related_parts.get(r_id)
+        if part is not None:
+            names.add(str(part.partname))
+    return names
 
 
 def _paragraph_text(paragraph):
@@ -461,17 +493,24 @@ def _paragraph_text(paragraph):
 def find_image_sections(document):
     """
     Locate the poster / photo / full-poster image paragraphs in a finished
-    report that follows the sample layout:
+    report.
 
-        ... 'Poster:' heading
-             [poster medium image]
-             'Figure 1: Poster'
-             'Photos' heading
-             [photo 1 image]
-             [photo 2 image]
-             [signature image]
-             'Principal'
-             [full poster image]
+    The layout the reports follow is:
+
+        'Poster:' (or a 'Figure 1: Poster' caption)
+            [poster medium image]
+        'Photos'
+            [photo 1 image]
+            [photo 2 image]
+            [signature image]
+        'Principal'
+            [full poster image]   <-- the LAST page of the report
+
+    The full poster is the full-page version of the *same* image as the
+    medium poster, so it is located by matching media parts. That is
+    reliable even when headings ("Photos", "Principal") are missing and
+    even when stray pages were appended after it. Anything located past
+    the full poster is treated as junk pages (trimmed separately).
 
     Returns a dict of section_key -> paragraph. Unused keys are omitted so
     optional replacement gracefully falls back to "leave as-is".
@@ -479,6 +518,7 @@ def find_image_sections(document):
     paragraphs = document.paragraphs
     texts = [_paragraph_text(p) for p in paragraphs]
     has_image = [_paragraph_has_image(p) for p in paragraphs]
+    image_indexes = [i for i, img in enumerate(has_image) if img]
 
     sections = {}
 
@@ -504,10 +544,13 @@ def find_image_sections(document):
             if has_image[figure_caption - 1]:
                 poster_medium = paragraphs[figure_caption - 1]
 
+    if poster_medium is None and image_indexes:
+        poster_medium = paragraphs[image_indexes[0]]
+
     if poster_medium is not None:
         sections["poster_medium"] = poster_medium
 
-    # --- Signature image (never replaced) ----------------------------
+    # --- Signature image (never replaced) -----------------------------
     signature = None
 
     principal_labels = [
@@ -523,26 +566,32 @@ def find_image_sections(document):
             break
 
     # --- Full poster --------------------------------------------------
+    # The full poster is the full-page copy of the medium poster image.
+    # Prefer an image sharing the medium poster's media part; fall back to
+    # the last image that is not already assigned to another section.
+    not_assigned = [
+        paragraphs[i] for i in image_indexes
+        if paragraphs[i] is not poster_medium
+        and paragraphs[i] is not signature
+    ]
+
     poster_full = None
+    medium_parts = (
+        _image_part_names(poster_medium)
+        if poster_medium is not None
+        else set()
+    )
 
-    for index, paragraph in enumerate(paragraphs):
-        if not has_image[index]:
-            continue
-        if paragraph is poster_medium or paragraph is signature:
-            continue
-        if paragraph.paragraph_format.page_break_before:
-            poster_full = paragraph
-            break
+    if medium_parts:
+        found = [
+            paragraph for paragraph in not_assigned
+            if _image_part_names(paragraph) & medium_parts
+        ]
+        if found:
+            poster_full = found[-1]
 
-    if poster_full is None:
-        for index in range(len(paragraphs) - 1, -1, -1):
-            if not has_image[index]:
-                continue
-            paragraph = paragraphs[index]
-            if paragraph is poster_medium or paragraph is signature:
-                continue
-            poster_full = paragraph
-            break
+    if poster_full is None and not_assigned:
+        poster_full = not_assigned[-1]
 
     if poster_full is not None:
         sections["poster_full"] = poster_full
@@ -553,18 +602,34 @@ def find_image_sections(document):
          if text.lower() == "photos"),
         None,
     )
+    if photos_label is not None:
+        photos_start = photos_label + 1
+    elif poster_label is not None:
+        photos_start = poster_label + 2
+    elif poster_medium is not None:
+        photos_start = paragraphs.index(poster_medium) + 1
+    else:
+        photos_start = 0
 
-    photos_start = photos_label + 1 if photos_label is not None else 0
+    photos_stop = len(paragraphs)
+    if poster_full is not None:
+        for index, paragraph in enumerate(paragraphs):
+            if paragraph is poster_full:
+                photos_stop = index
+                break
+
+    for index in range(photos_start, photos_stop):
+        if "principal" in texts[index].lower():
+            photos_stop = index
+            break
 
     photos = []
-    for index in range(photos_start, len(paragraphs)):
+    for index in range(photos_start, photos_stop):
         paragraph = paragraphs[index]
-        if paragraph is signature or paragraph is poster_medium:
+        if paragraph is poster_medium or paragraph is signature:
             continue
         if paragraph is poster_full:
             continue
-        if "principal" in texts[index].lower():
-            break
         if has_image[index]:
             photos.append(paragraph)
 
@@ -587,10 +652,12 @@ def replace_paragraph_image(paragraph, image_stream):
     """
     old_extents = _image_extents(paragraph)
 
-    for run in paragraph.runs:
-        for tag in ("drawing", "pict", "object"):
-            for child in run._element.findall(qn("w:" + tag)):
-                run._element.remove(child)
+    element = paragraph._element
+    for tag in ("w:drawing", "w:pict", "w:object"):
+        for child in element.findall(".//" + qn(tag)):
+            parent = child.getparent()
+            if parent is not None:
+                parent.remove(child)
 
     run = (
         paragraph.runs[0]
@@ -662,6 +729,154 @@ def apply_image_replacements(document, image_mapping):
     return replaced
 
 
+def trim_after_full_poster(document, poster_full_paragraph=None):
+    """
+    Delete everything that comes after the full poster so the large poster
+    becomes the last page of the report.
+
+    Stray pages (extra paragraphs/tables appended after the poster) are
+    removed. The document's final <w:sectPr> is preserved; if a deleted
+    trailing paragraph carried the section properties in its pPr, that
+    sectPr is relocated to the end of the body instead.
+
+    Returns the number of body elements removed.
+    """
+    if poster_full_paragraph is None:
+        poster_full_paragraph = find_image_sections(document).get("poster_full")
+    if poster_full_paragraph is None:
+        return 0
+
+    body = document.element.body
+    marker = poster_full_paragraph._p
+
+    replacement_sectpr = None
+    removed = 0
+
+    sibling = marker.getnext()
+    while sibling is not None:
+        following = sibling.getnext()
+
+        if sibling.tag == qn("w:sectPr"):
+            break
+
+        if sibling.tag == qn("w:p"):
+            for sectpr in sibling.findall(".//" + qn("w:sectPr")):
+                if sectpr.getparent() is not None:
+                    replacement_sectpr = sectpr
+
+        body.remove(sibling)
+        removed += 1
+        sibling = following
+
+    if (
+        replacement_sectpr is not None
+        and replacement_sectpr.getparent() is None
+    ):
+        body.append(replacement_sectpr)
+
+    return removed
+
+
+# ============================================================
+# VENUE CORRECTION
+# ============================================================
+
+_VENUE_LABEL = re.compile(
+    r"\bvenue\b\s*[:：]\s*(?P<value>[^\n]+)",
+    re.IGNORECASE,
+)
+
+
+def find_primary_venue(document):
+    """
+    Locate the current venue value next to a 'Venue :' label anywhere in
+    the document (body or table). Returns None, or a dict with 'value',
+    'location', 'paragraph' and 'context'.
+    """
+    for location, paragraph in _iter_document_paragraphs(document):
+        text = "".join(run.text for run in paragraph.runs)
+        match = _VENUE_LABEL.search(text)
+        if not match:
+            continue
+        value = match.group("value").strip()
+        if not value:
+            continue
+        return {
+            "value": value,
+            "location": location,
+            "paragraph": paragraph,
+            "context": text.strip(),
+        }
+    return None
+
+
+def find_text_occurrences(document, old_text):
+    """
+    Find every occurrence of a literal substring across body and table
+    paragraphs. Returns a list of occurrence dicts (same shape as the date
+    occurrences, with fmt=None) ready for detect_* / apply_occurrences.
+    """
+    occurrences = []
+    if not old_text:
+        return occurrences
+
+    for location, paragraph in _iter_document_paragraphs(document):
+        text = "".join(run.text for run in paragraph.runs)
+        position = 0
+        while True:
+            start = text.find(old_text, position)
+            if start < 0:
+                break
+            end = start + len(old_text)
+            first = max(0, start - 25)
+            last = min(len(text), end + 25)
+            occurrences.append({
+                "location": location,
+                "paragraph": paragraph,
+                "start": start,
+                "end": end,
+                "original": old_text,
+                "fmt": None,
+                "context": text.strip(),
+                "snippet": text[first:last].replace("\n", " "),
+            })
+            position = end
+
+    return occurrences
+
+
+def detect_venue(document, new_venue_str):
+    """
+    Detect the current venue value from the 'Venue :' label and find every
+    occurrence of that value in the report.
+
+    Returns a dict with:
+      primary   : dict or None
+      new_venue : the corrected venue value
+      matches   : list of occurrence dicts with a computed 'new' text
+    """
+    primary = find_primary_venue(document)
+    if primary is None:
+        return {
+            "primary": None,
+            "new_venue": new_venue_str,
+            "matches": [],
+        }
+
+    old_value = primary["value"]
+    occurrences = find_text_occurrences(document, old_value)
+
+    for occurrence in occurrences:
+        occurrence["new"] = new_venue_str
+        occurrence["changed"] = new_venue_str != occurrence["original"]
+
+    return {
+        "primary": primary,
+        "new_venue": new_venue_str,
+        "matches": occurrences,
+    }
+
+
 # ============================================================
 # FIELD REGISTRY (extensible for future fields)
 # ============================================================
@@ -671,8 +886,11 @@ FIELD_REGISTRY = {
         "label": "Date",
         "detect": detect_corrections,
     },
+    "venue": {
+        "label": "Venue",
+        "detect": detect_venue,
+    },
     # Future fields will be registered here, e.g.:
-    #   "venue": {"label": "Venue", "detect": detect_venue},
     #   "title": {"label": "Report title", "detect": detect_title},
     #   "faculty": {"label": "Faculty name", "detect": detect_faculty},
 }

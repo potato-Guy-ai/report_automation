@@ -34,9 +34,10 @@ st.set_page_config(
 st.title("📄 Report Automation System")
 
 st.write(
-    "Create a professional event report automatically "
-    "using the provided Word template, or correct the "
-    "date in an already-finished report."
+    "Create a professional event report automatically using the "
+    "provided Word template, or pull the contents out of an "
+    "already-finished report, fix the wrong values and regenerate "
+    "a clean, properly aligned document."
 )
 
 st.divider()
@@ -50,12 +51,12 @@ mode = st.radio(
     "Mode",
     [
         "Generate from template",
-        "Correct existing report",
+        "Regenerate from existing report",
     ],
     horizontal=True,
 )
 
-if mode == "Correct existing report":
+if mode == "Regenerate from existing report":
     render_correction_ui()
     st.stop()
 
