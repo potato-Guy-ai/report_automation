@@ -25,6 +25,7 @@ from engine.extractor import (
     build_generation_data,
     rewrite_dates_in_text,
 )
+from engine.ai import generate_description
 from engine.corrector import load_document
 
 
@@ -106,6 +107,16 @@ def build_parser():
     )
 
     parser.add_argument(
+        "--ai",
+        action="store_true",
+        help=(
+            "Auto-generate the description with Google Gemini "
+            "(requires a GEMINI_API_KEY in the environment or "
+            ".streamlit/secrets.toml)."
+        ),
+    )
+
+    parser.add_argument(
         "--preview",
         action="store_true",
         help="Show the extracted values and quit without writing anything.",
@@ -179,6 +190,21 @@ def main():
         extracted["description"] = Path(args.description).read_text(
             encoding="utf-8"
         )
+
+    if args.ai:
+        try:
+            generated = generate_description(
+                {
+                    "title": extracted["title"],
+                    "date_time": extracted["date_time"],
+                    "venue": extracted["venue"],
+                    "reference_description": original["description"],
+                }
+            )
+            extracted["description"] = generated
+        except ValueError as error:
+            print(f"AI generation failed: {error}")
+            raise SystemExit(1)
 
     # Propagate a corrected date into every date mention inside the
     # description text (keeps each mention's own format, so "January

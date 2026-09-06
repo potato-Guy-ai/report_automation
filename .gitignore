@@ -1,0 +1,20 @@
+# Streamlit secrets (holds the Gemini API key locally).
+# On Streamlit Community Cloud the key is entered in the dashboard.
+.streamlit/secrets.toml
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Generated reports / build output
+output/
+corrected_*.docx
+generated_*.docx
+rebuilt_*.docx
+regenerated_*.docx
+
+# OS
+Thumbs.db
+.DS_Store

@@ -3,6 +3,7 @@ from pathlib import Path
 
 from docx.text.paragraph import Paragraph
 from docx.shared import Inches
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 from PIL import Image
 
 
@@ -115,7 +116,8 @@ def _replace_text_placeholder(paragraph, data):
         _replace_text(
             paragraph,
             placeholder,
-            str(value)
+            str(value),
+            justify=(key == "DESCRIPTION"),
         )
 
 
@@ -123,7 +125,7 @@ def _replace_text_placeholder(paragraph, data):
 # TEXT WITH MULTIPLE PARAGRAPHS
 # ============================================================
 
-def _replace_text(paragraph, placeholder, value):
+def _replace_text(paragraph, placeholder, value, justify=False):
 
     # Normalize literal backslash-n sequences (e.g. "\n" typed
     # as two characters) into real newlines so they are rendered
@@ -144,7 +146,8 @@ def _replace_text(paragraph, placeholder, value):
 
     _set_paragraph_content(
         paragraph,
-        parts[0]
+        parts[0],
+        justify=justify,
     )
 
     current_paragraph = paragraph
@@ -167,7 +170,8 @@ def _replace_text(paragraph, placeholder, value):
 
         _set_paragraph_content(
             new_paragraph,
-            part
+            part,
+            justify=justify,
         )
 
         current_paragraph = new_paragraph
@@ -177,25 +181,43 @@ def _replace_text(paragraph, placeholder, value):
 # TEXT + SINGLE LINE BREAKS
 # ============================================================
 
-def _set_paragraph_content(paragraph, text):
+def _set_paragraph_content(paragraph, text, justify=False):
 
     # Clear existing text
     for run in paragraph.runs:
         run.text = ""
 
-    if paragraph.runs:
-        run = paragraph.runs[0]
-    else:
-        run = paragraph.add_run()
+    # Minimal **markdown** support: segments between double asterisks
+    # are written into bold runs; everything else stays normal.
+    segments = text.split("**")
 
-    lines = text.split("\n")
+    reusable = list(paragraph.runs)
+    cursor = 0
 
-    for index, line in enumerate(lines):
+    for index, segment in enumerate(segments):
 
-        run.add_text(line)
+        if not segment:
+            continue
 
-        if index < len(lines) - 1:
-            run.add_break()
+        if cursor < len(reusable):
+            run = reusable[cursor]
+            cursor += 1
+        else:
+            run = paragraph.add_run()
+
+        run.bold = index % 2 == 1
+
+        lines = segment.split("\n")
+
+        for line_index, line in enumerate(lines):
+
+            run.add_text(line)
+
+            if line_index < len(lines) - 1:
+                run.add_break()
+
+    if justify:
+        paragraph.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
 
 
 # ============================================================

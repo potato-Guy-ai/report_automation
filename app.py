@@ -5,6 +5,7 @@ import tempfile
 from engine.template_loader import load_template
 from engine.content_inserter import replace_placeholders
 from engine.preview import render_docx_preview, show_preview
+from engine.ai import generate_description, resolve_api_key
 from ui_correction import render_correction_ui
 
 
@@ -90,8 +91,63 @@ venue = st.text_input(
 
 st.subheader("Report Content")
 
+with st.expander(
+    "✨ Auto-generate description with AI (optional)",
+    expanded=False,
+):
+
+    st.caption(
+        "The description is written by Google Gemini, kept to a "
+        "single page, and the important words are bolded. You can "
+        "edit it below before generating the report."
+    )
+
+    if st.button(
+        "✨ Generate with AI",
+        use_container_width=True,
+    ):
+
+        key = resolve_api_key()
+
+        if not key:
+
+            st.error(
+                "No Gemini API key configured. Add the GEMINI_API_KEY "
+                "secret in the Streamlit Community Cloud dashboard and "
+                "try again."
+            )
+
+        else:
+
+            with st.spinner("Writing your description..."):
+
+                try:
+
+                    generated = generate_description(
+                        {
+                            "title": event_title,
+                            "date_time": date_time,
+                            "venue": venue,
+                        },
+                        api_key=key,
+                    )
+
+                    st.session_state["gen_ai_desc"] = generated
+
+                    st.success(
+                        "Description generated! It is now loaded "
+                        "in the box below."
+                    )
+
+                except Exception as error:
+
+                    st.error(str(error))
+
+description_default = st.session_state.get("gen_ai_desc", "")
+
 description = st.text_area(
     "Event Description",
+    value=description_default,
     placeholder=(
         "Enter the complete report content here...\n\n"
         "You can write multiple paragraphs and as much content "

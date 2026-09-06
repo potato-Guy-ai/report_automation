@@ -25,6 +25,7 @@ from engine.extractor import (
     rewrite_dates_in_text,
 )
 from engine.preview import render_docx_preview, show_preview
+from engine.ai import generate_description, resolve_api_key
 
 from pathlib import Path as _Path
 
@@ -76,6 +77,8 @@ def render_correction_ui():
 
             st.session_state["re_original_name"] = uploaded.name
 
+            st.session_state.pop("re_ai_desc", None)
+
             st.success("Report data extracted!")
 
         except Exception as e:
@@ -126,9 +129,73 @@ def render_correction_ui():
         placeholder="30-01-2026 & 01.30 am to 5 pm",
     )
 
+    # ------------------------------------------------------------
+    # AI-ASSISTED DESCRIPTION
+    # ------------------------------------------------------------
+
+    with st.expander(
+        "✨ Auto-generate description with AI (optional)",
+        expanded=False,
+    ):
+
+        st.caption(
+            "The description is written by Google Gemini, kept to a "
+            "single page, and the important words are bolded. You can "
+            "edit it before regenerating the report."
+        )
+
+        if st.button(
+            "✨ Generate with AI",
+            use_container_width=True,
+        ):
+
+            key = resolve_api_key()
+
+            if not key:
+
+                st.error(
+                    "No Gemini API key configured. Add the GEMINI_API_KEY "
+                    "secret in the Streamlit Community Cloud dashboard "
+                    "and try again."
+                )
+
+            else:
+
+                with st.spinner("Writing your description..."):
+
+                    try:
+
+                        generated = generate_description(
+                            {
+                                "title": data["title"],
+                                "date_time": data["date_time"],
+                                "venue": data["venue"],
+                                "reference_description": extracted[
+                                    "description"
+                                ],
+                            },
+                            api_key=key,
+                        )
+
+                        st.session_state["re_ai_desc"] = generated
+
+                        st.success(
+                            "Description generated! It is now loaded "
+                            "in the box below."
+                        )
+
+                    except Exception as error:
+
+                        st.error(str(error))
+
+    description_default = st.session_state.get(
+        "re_ai_desc",
+        extracted["description"],
+    )
+
     data["description"] = st.text_area(
         "Event Description",
-        value=extracted["description"],
+        value=description_default,
         height=300,
     )
 
