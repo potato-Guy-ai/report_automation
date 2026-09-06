@@ -200,8 +200,18 @@ def extract_report_data(document, new_date=None, new_venue=None):
             if _paragraph_text(paragraph) == title:
                 start_from = index + 1
                 break
-    if start_from is None and report_on is not None:
-        start_from = report_on + 1
+
+    if start_from is None:
+        report_on = next(
+            (
+                index
+                for index, paragraph in enumerate(body_paragraphs)
+                if _paragraph_text(paragraph).lower() == "report on"
+            ),
+            None,
+        )
+        if report_on is not None:
+            start_from = report_on + 1
     if start_from is None:
         start_from = 0
 
@@ -258,6 +268,51 @@ def extract_report_data(document, new_date=None, new_venue=None):
     return extracted
 
 
+def rewrite_dates_in_text(text, old_date_str, new_date_str):
+    """
+    Rewrite every date mention inside `text` whose calendar date equals
+    the date read from old_date_str so it reflects the date read from
+    new_date_str. Each mention keeps its original format (so
+    "January 30, 2026", "30 Jan 2026" or "30-01-2026" are each
+    reformatted consistently with the new date).
+
+    No-op (returns text unchanged) when either string has no parsable
+    date or the dates are identical.
+    """
+    if not text:
+        return text
+
+    old_canonical = parse_date_token(old_date_str)
+    new_canonical = parse_date_token(new_date_str)
+
+    if old_canonical is None or new_canonical is None:
+        return text
+
+    if old_canonical == new_canonical:
+        return text
+
+    parts = []
+    last = 0
+
+    for match in _DATE_PATTERN.finditer(text):
+
+        parsed = parse_date_match(match)
+        if parsed is None:
+            continue
+
+        canonical, fmt = parsed
+        if canonical != old_canonical:
+            continue
+
+        parts.append(text[last:match.start()])
+        parts.append(render_new_date(fmt, new_canonical))
+        last = match.end()
+
+    parts.append(text[last:])
+
+    return "".join(parts)
+
+
 def build_generation_data(extracted, image_overrides=None):
     """
     Turn an extraction result into the data dict the generator expects.
@@ -267,11 +322,13 @@ def build_generation_data(extracted, image_overrides=None):
     """
     image_overrides = image_overrides or {}
 
-    def resolve(key):
+    def resolve(key, optional=False):
         if key in image_overrides and image_overrides[key] is not None:
             return image_overrides[key]
         bytes_value = extracted[f"{key}_image"]
         if bytes_value is None:
+            if optional:
+                return None
             raise ValueError(
                 f"No {key} image available for regeneration."
             )
@@ -291,6 +348,6 @@ def build_generation_data(extracted, image_overrides=None):
         "DESCRIPTION": extracted["description"] or "",
         "POSTER_MEDIUM": poster_medium,
         "EVENT_PHOTO_1": resolve("photo1"),
-        "EVENT_PHOTO_2": resolve("photo2"),
+        "EVENT_PHOTO_2": resolve("photo2", optional=True),
         "POSTER_FULL": poster_full,
     }

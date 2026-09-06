@@ -4,6 +4,7 @@ import tempfile
 
 from engine.template_loader import load_template
 from engine.content_inserter import replace_placeholders
+from engine.preview import render_docx_preview, show_preview
 from ui_correction import render_correction_ui
 
 
@@ -194,9 +195,6 @@ if generate:
     if not photo1:
         missing_fields.append("Event Photo 1")
 
-    if not photo2:
-        missing_fields.append("Event Photo 2")
-
     if missing_fields:
 
         st.error(
@@ -227,9 +225,13 @@ if generate:
             photo1.getbuffer()
         )
 
-        photo2_path.write_bytes(
-            photo2.getbuffer()
-        )
+        photo2_value = None
+
+        if photo2 is not None:
+            photo2_path.write_bytes(
+                photo2.getbuffer()
+            )
+            photo2_value = photo2_path
 
 
         # ----------------------------------------------------
@@ -250,7 +252,7 @@ if generate:
 
             "EVENT_PHOTO_1": photo1_path,
 
-            "EVENT_PHOTO_2": photo2_path,
+            "EVENT_PHOTO_2": photo2_value,
 
             "POSTER_FULL": poster_path,
         }
@@ -308,6 +310,14 @@ if generate:
                 ),
                 use_container_width=True
             )
+
+            # ------------------------------------------------
+            # PREVIEW
+            # ------------------------------------------------
+
+            pages = render_docx_preview(report_bytes, temp_dir)
+
+            show_preview(pages)
 
 
         except Exception as e:

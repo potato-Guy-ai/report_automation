@@ -69,6 +69,12 @@ def _process_paragraph(paragraph, data):
                     image_path,
                     image_type
                 )
+            else:
+                # No image supplied for this slot (e.g. an optional
+                # second photo is missing): blank the placeholder so
+                # it never renders literally in the document.
+                for run in paragraph.runs:
+                    run.text = ""
 
             return
 

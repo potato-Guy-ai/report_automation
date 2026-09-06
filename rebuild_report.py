@@ -20,7 +20,11 @@ from docx import Document
 
 from engine.template_loader import load_template
 from engine.content_inserter import replace_placeholders
-from engine.extractor import extract_report_data, build_generation_data
+from engine.extractor import (
+    extract_report_data,
+    build_generation_data,
+    rewrite_dates_in_text,
+)
 from engine.corrector import load_document
 
 
@@ -126,6 +130,8 @@ def main():
 
     document = load_document(input_path)
 
+    original = extract_report_data(document)
+
     try:
         extracted = extract_report_data(
             document,
@@ -173,6 +179,15 @@ def main():
         extracted["description"] = Path(args.description).read_text(
             encoding="utf-8"
         )
+
+    # Propagate a corrected date into every date mention inside the
+    # description text (keeps each mention's own format, so "January
+    # 30, 2026" becomes "February 23, 2026" when the date is changed).
+    extracted["description"] = rewrite_dates_in_text(
+        extracted["description"],
+        original["date_time"],
+        extracted["date_time"],
+    )
 
     image_overrides = {}
 

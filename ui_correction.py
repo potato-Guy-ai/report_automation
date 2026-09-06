@@ -19,7 +19,12 @@ from docx import Document
 
 from engine.template_loader import load_template
 from engine.content_inserter import replace_placeholders
-from engine.extractor import extract_report_data, build_generation_data
+from engine.extractor import (
+    extract_report_data,
+    build_generation_data,
+    rewrite_dates_in_text,
+)
+from engine.preview import render_docx_preview, show_preview
 
 from pathlib import Path as _Path
 
@@ -92,6 +97,15 @@ def render_correction_ui():
     # ------------------------------------------------------------
     # TEXT FIELDS (prefilled with the extracted values)
     # ------------------------------------------------------------
+
+    st.subheader("Report Details")
+
+    st.caption(
+        "These values were pulled out of your report. "
+        "Edit any of them: Title, Date & Time, Venue and "
+        "Description will be placed into the regenerated "
+        "document."
+    )
 
     data = {}
 
@@ -238,12 +252,24 @@ def render_correction_ui():
 
         with st.spinner("Regenerating report..."):
 
+            description = rewrite_dates_in_text(
+                data["description"],
+                extracted["date_time"],
+                data["date_time"],
+            )
+
+            if description != data["description"]:
+                st.caption(
+                    "The date mentions inside the description were "
+                    "rewritten to match the new Date & Time."
+                )
+
             generation_data = build_generation_data(
                 {
                     "date_time": data["date_time"],
                     "venue": data["venue"],
                     "title": data["title"],
-                    "description": data["description"],
+                    "description": description,
                     "poster_image": extracted["poster_image"],
                     "photo1_image": extracted["photo1_image"],
                     "photo2_image": extracted["photo2_image"],
@@ -269,6 +295,8 @@ def render_correction_ui():
 
                 output_bytes = output_path.read_bytes()
 
+                pages = render_docx_preview(output_bytes, temp_dir)
+
         st.success("✅ Report regenerated successfully!")
 
         st.download_button(
@@ -281,6 +309,8 @@ def render_correction_ui():
             ),
             use_container_width=True,
         )
+
+        show_preview(pages)
 
     except Exception as e:
 
